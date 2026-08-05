@@ -60,11 +60,22 @@ Database schema updates must be mirrored in init-db/01_init.sql.
 
 ### 2. Backend Development
 
-Station parsing strategies must implement a unified interface (StationParserStrategy).
+- **Strategy Pattern & Metadata Handling**:
+  - All station parsers MUST implement the unified `StationParserStrategy` interface.
+  - The return object MUST include the resolved `.m3u8` stream URL along with required HTTP client headers (`Referer`, `User-Agent`) and token TTL/expiration metadata if present.
+  - Raw dynamic structures from external station APIs MUST be persisted into the `stations.metadata` (`JSONB`) column for debugging and schema change tracking.
 
-Parsed HLS stream URLs must be upserted to the stream_cache (UNLOGGED) table.
+- **Caching & Refresh Lifecycle**:
+  - Parsed streams MUST be upserted to the `stream_cache` (`UNLOGGED`) table along with `expires_at` timestamps and required headers.
+  - Fastify stream resolution endpoints MUST check TTL validity before serving cached URLs. If expired or near-expiration, trigger a synchronous or asynchronous parser refresh.
 
-Health checking workers must write ping metrics directly to the stream_health_logs hypertable.
+- **CORS & Proxy Fallback**:
+  - For web clients (`Nuxt 3`) facing CORS restrictions on external broadcaster CDNs, Fastify MUST provide an optional manifest/segment relay strategy or rewrite headers dynamically to bypass browser origin blocks.
+
+- **Health Monitoring & Auto-Recovery**:
+  - Background Health Checker workers MUST ping cached `.m3u8` URLs periodically (1–5 min interval) using standard HTTP `HEAD`/`GET` requests.
+  - Ping results (HTTP status code, latency in ms, success/failure) MUST be inserted directly into the `stream_health_logs` TimescaleDB hypertable.
+  - If a stream returns non-200 status codes consecutively, the worker MUST publish an invalidation event via PostgreSQL `LISTEN/NOTIFY` to trigger immediate re-parsing for that station.
 
 ### 3. API Contracts
 
