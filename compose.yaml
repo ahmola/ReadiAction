@@ -1,0 +1,79 @@
+services:
+  # 1. All-in-One Database (PostgreSQL + TimescaleDB)
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: radio_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: radio_db
+      POSTGRES_USER: radio_user
+      POSTGRES_PASSWORD: radio_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U radio_user -d radio_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Monitoring Dashboard (Grafana)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: radio_grafana
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafanadata:/var/lib/grafana
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # 3. Backend API Server (Fastify Node.js App)
+  backend:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    container_name: radio_backend
+    restart: always
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgres://radio_user:radio_password@postgres:5432/radio_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck: # this is just an temporary. Need to be fixed as specific healthcheck route
+      test: ["executable", "arg"]
+      interval: 1m30s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: radio_web
+    restart: always
+    ports:
+      - "3000:3000" # 외부 노출용 포트 (필요 시 80/443 Nginx 리버스 프록시 연동)
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      NUXT_PUBLIC_API_BASE: http://backend:4000 # SSR 내부 통신용 (브라우저 직접 요청 시 외부 URL 적용)
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  grafanadata:
